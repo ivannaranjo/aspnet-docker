@@ -7,7 +7,11 @@ FROM gcr.io/google_appengine/debian8
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
          python \
+         python-pip \
     && apt-get clean
+
+# Intall the required python dependencies.
+RUN pip install pyyaml
 
 RUN mkdir -p /builder
 ADD . /builder
