@@ -31,19 +31,27 @@ import sys
 import textwrap
 from distutils.version import StrictVersion
 
+import yaml
 
+APPYAML_NAME = 'app.yaml'
 ASSEMBLY_NAME_TEMPLATE = '{0}.dll'
 DEPS_PATTERN = '*.deps.json'
 DEPS_EXTENSION = '.deps.json'
 DOCKERFILE_NAME = 'Dockerfile'
+DOCKERFILE_ENTRYPOINT = 'ENTRYPOINT [ "dotnet", "{assembly}" ]'
+DOCKERFILE_CMD = 'CMD {cmd}'
 DOCKERFILE_CONTENTS = textwrap.dedent(
     """\
-    FROM {runtime_image}
+    FROM {base_image}
+    {packages}
     ADD ./ /app
     ENV ASPNETCORE_URLS=http://*:${{PORT}}
     WORKDIR /app
-    ENTRYPOINT [ "dotnet", "{dll_name}.dll" ]
+    {entrypoint}
     """)
+DOCKERFILE_PACKAGES = 'RUN apt-get udpate && apt-get install {packages} -y && apt-get clean'
+ENTRYPOINT_KEY = 'entrypoint'
+PACKAGES_KEY = 'packages'
 NETCORE_APP_PREFIX = 'microsoft.netcore.app/'
 
 
@@ -145,6 +153,25 @@ class BaseImage(object):
                 StrictVersion(self.version) >= StrictVersion(version))
 
 
+class AppYaml(object):
+    """This class contains the required information extracted from app.yaml"""
+
+    def __init__(self):
+        """Loads the app.yaml from the current directory and parses it.
+
+        Extracts the entrypoint and packages for the runtime.
+        """
+        self.entrypoint = None
+        self.packages = []
+        if os.path.isfile(APPYAML_NAME):
+            with open(APPYAML_NAME, 'r') as src:
+                content = yaml.load(src)
+            if ENTRYPOINT_KEY in content:
+                self.entrypoint = content[ENTRYPOINT_KEY]
+            if PACKAGES_KEY in content:
+                self.packages = content[PACKAGES_KEY]
+
+
 def parse_version_map(version_map):
     """Produces a list of version to Docker tag from the map.
 
@@ -196,6 +223,34 @@ def get_base_image(version_map, version):
     return None
 
 
+def format_dockerfile(base_image, assembly_name, app_yaml):
+    """Creates the Dockerfile for the app.
+
+    This function will create the Dockerfile for the app, if necessary
+    it will add the entrypoint and packages to the final Dockerfile.
+
+    Args:
+        base_image: The base image to use for the app.
+        assembly_name: The name of the main assembly for the app.
+        app_yaml: The parsed app_yaml with the extra config.
+
+    Returns:
+        The contents of the Dockerfile
+    """
+    entrypoint = ''
+    if app_yaml.entrypoint:
+        entrypoint = DOCKERFILE_CMD.format(cmd=app_yaml.entrypoint)
+    else:
+        entrypoint = DOCKERFILE_ENTRYPOINT.format(assembly=assembly_name)
+
+    packages = ''
+    if app_yaml.packages:
+        packages = DOCKERFILE_PACKAGES.format(packages=' '.join(app_yaml.packages))
+
+    return DOCKERFILE_CONTENTS.format(
+        base_image=base_image, entrypoint=entrypoint, packages=packages)
+
+
 def main(params):
     """Ensures that a Dockerfile exists in the current directory.
 
@@ -239,7 +294,7 @@ def main(params):
         print 'Cannot find entry point assembly {0} for ASP.NET Core project'.format(assembly_name)
         sys.exit(1)
 
-    contents = DOCKERFILE_CONTENTS.format(runtime_image=base_image.image, dll_name=project_name)
+    contents = format_dockerfile(base_image.image, assembly_name, AppYaml())
     with open(DOCKERFILE_NAME, 'wt') as out:
         out.write(contents)
 
