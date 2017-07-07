@@ -5,7 +5,7 @@ FROM gcr.io/google_appengine/debian8
 
 # We need python to run the builder script.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+    && apt-get install -y \
         ca-certificates \
         curl \
         libc6 \
@@ -19,8 +19,12 @@ RUN apt-get update \
         libunwind8 \
         libuuid1 \
         python \
+        python-pip \
         zlib1g \
     && apt-get clean
+
+# Install the PyYaml library.
+RUN pip install PyYaml
 
 # Add the prepare build script.
 RUN mkdir -p /builder

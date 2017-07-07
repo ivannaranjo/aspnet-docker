@@ -31,6 +31,7 @@ import shutil
 import sys
 import subprocess
 import textwrap
+import yaml
 from distutils.version import StrictVersion
 
 
@@ -248,6 +249,23 @@ def build_app(root, entrypoint, output):
     shutil.move(published_dir, output)
 
 
+class AppSettings(object):
+    def __init__(self, content):
+        runtime_settings = content['runtime_config']
+        self.entrypoint = runtime_settings['entrypoint']
+
+
+def parse_appyaml(appyaml):
+    """Parses the app.yaml for the app.
+
+    Args:
+        appyaml: The path to the app.yaml.
+    """
+    with open(appyaml, 'r') as src:
+        content = yaml.load(src)
+        return AppSettings(content)
+
+
 def main(params):
     """Ensures that a Dockerfile exists in the current directory.
 
@@ -263,7 +281,7 @@ def main(params):
 
     # Build the app and prepare it for deployment.
     try:
-        build_app(params.root, params.entrypoint, params.output)
+        build_app(params.root, settings.entrypoint, params.output)
     except DotnetException:
         print ('Failed to build .NET Core app.')
         sys.exit(1)
@@ -326,7 +344,4 @@ if __name__ == '__main__':
                         help='The path to the app.yaml.',
                         default=APPYAML_NAME,
                         required=False)
-    PARSER.add_argument('-e', '--entrypoint',
-                        help='The entrypoint for the app.',
-                        required=True)
     main(PARSER.parse_args())
