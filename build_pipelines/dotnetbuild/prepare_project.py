@@ -27,7 +27,9 @@ import argparse
 import glob
 import json
 import os
+import shutil
 import sys
+import subprocess
 import textwrap
 from distutils.version import StrictVersion
 
@@ -35,6 +37,8 @@ from distutils.version import StrictVersion
 ASSEMBLY_NAME_TEMPLATE = '{0}.dll'
 DEPS_PATTERN = '*.deps.json'
 DEPS_EXTENSION = '.deps.json'
+PUBLISH_ROOT = './publish_root'
+APPYAML_NAME='app.yaml'
 DOCKERFILE_NAME = 'Dockerfile'
 DOCKERFILE_CONTENTS = textwrap.dedent(
     """\
@@ -187,7 +191,7 @@ def get_base_image(version_map, version):
     Note that this function assumes that the version_map is sorted
     according to the priority order of the versions.
 
-    Args:p
+    Args:
         version_map: The container of all supported minor versions.
         version: The requested version string.
 
@@ -202,6 +206,48 @@ def get_base_image(version_map, version):
     return None
 
 
+class DotnetException(Exception):
+    def __init__(self, resultcode):
+        self.resultcode = resultcode
+
+
+def call_dotnet(args, cwd):
+    """Calls the dotnet executable.
+
+    Args:
+        args: The list of arguments to pass to dotnet.
+        cwd: The current workging directory to use.
+    """
+    proc = subprocess.Popen(['dotnet'] + args, cwd=cwd)
+    result = proc.wait()
+    if result != 0:
+        raise DotnetException(result)
+
+
+def build_app(root, entrypoint, output):
+    """Builds the app.
+
+    Args:
+        root: The root of the app.
+        entrypoint: Path to the entrypoint project.
+        output: The path where to store the published app.
+
+    Returns:
+        A boolean, True if success, False if failure.
+    """
+
+    # Restore the app dependencies at the solution level.
+    call_dotnet(['restore'], root)
+
+    # Publish the entrypoint project to a well known location.
+    project_dir = os.path.join(root, entrypoint)
+    call_dotnet(['publish', '-c', 'Release', '-o', './publish_output'], project_dir)
+
+    # Move the published directory to the output.
+    published_dir = os.path.join(project_dir, "publish_output")
+    shutil.move(published_dir, output)
+
+
 def main(params):
     """Ensures that a Dockerfile exists in the current directory.
 
@@ -213,16 +259,26 @@ def main(params):
     """
     version_map = parse_version_map(params.version_map)
 
+    settings = parse_appyaml(params.appyaml)
+
+    # Build the app and prepare it for deployment.
+    try:
+        build_app(params.root, params.entrypoint, params.output)
+    except DotnetException:
+        print ('Failed to build .NET Core app.')
+        sys.exit(1)
+
     # The app cannot specify it's own Dockerfile when building with
     # the aspnetcore image, the builder is the one that has to build
     # it. To avoid any confusion the builder will fail with this
     # error.
-    if os.path.isfile(DOCKERFILE_NAME):
+    dockerfile_path = os.path.join(params.output, DOCKERFILE_NAME)
+    if os.path.isfile(dockerfile_path):
         print ('A Dockerfile already exists in the workspace, this Dockerfile ' +
                'cannot be used with the aspnetcore runtime.')
         sys.exit(1)
 
-    deps_path = get_deps_path(params.root)
+    deps_path = get_deps_path(params.output)
     if deps_path is None:
         print 'No .deps.json file found for the app'
         sys.exit(1)
@@ -241,12 +297,12 @@ def main(params):
 
     project_name = get_project_assembly_name(deps_path)
     assembly_name = ASSEMBLY_NAME_TEMPLATE.format(project_name)
-    if not os.path.isfile(os.path.join(params.root, assembly_name)):
+    if not os.path.isfile(os.path.join(params.output, assembly_name)):
         print 'Cannot find entry point assembly {0} for ASP.NET Core project'.format(assembly_name)
         sys.exit(1)
 
     contents = DOCKERFILE_CONTENTS.format(runtime_image=base_image.image, dll_name=project_name)
-    with open(params.output, 'wt') as out:
+    with open(dockerfile_path, 'wt') as out:
         out.write(contents)
 
 
@@ -259,11 +315,18 @@ if __name__ == '__main__':
                         nargs='+',
                         required=True)
     PARSER.add_argument('-o', '--output',
-                        help='The output for the Dockefile.',
-                        default=DOCKERFILE_NAME,
+                        help='The output for app build.',
+                        default=PUBLISH_ROOT,
                         required=False)
     PARSER.add_argument('-r', '--root',
                         help='The path to the root of the app.',
                         default='.',
                         required=False)
+    PARSER.add_argument('-a', '--appyaml',
+                        help='The path to the app.yaml.',
+                        default=APPYAML_NAME,
+                        required=False)
+    PARSER.add_argument('-e', '--entrypoint',
+                        help='The entrypoint for the app.',
+                        required=True)
     main(PARSER.parse_args())
