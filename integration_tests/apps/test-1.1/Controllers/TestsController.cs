@@ -15,7 +15,7 @@ namespace Test_1_1.Controllers
     [Route("/")]
     public class TestsController : Controller
     {
-        private static readonly Lazy<string> s_ProjectId = new Lazy<string>(GetProjectId);
+        private static readonly Lazy<string> s_projectId = new Lazy<string>(GetProjectId);
 
         private readonly ILogger _logger;
 
@@ -37,8 +37,9 @@ namespace Test_1_1.Controllers
         [HttpPost("/logging_standard")]
         public string StandardLoggingTests([FromBody] LoggingData data)
         {
-            var project = s_ProjectId.Value;
-            _logger.LogDebug($"Detected project: {project}");
+            var loggerForLevel = GetLogger(data.Level);
+            var project = s_projectId.Value;
+            loggerForLevel(data.Token);
             return $"{data.LogName}/{data.Level}";
         }
 
@@ -51,6 +52,24 @@ namespace Test_1_1.Controllers
         private static string GetEnvironmentProjectId()
         {
             return Environment.GetEnvironmentVariable("GOOGLE_CLOUD_PROJECT");
+        }
+
+        private Action<string> GetLogger(string level)
+        {
+            switch (level)
+            {
+                case "WARNING":
+                    return x => _logger.LogDebug(x);
+
+                case "ERROR":
+                    return x => _logger.LogError(x);
+
+                case "CRITICAL":
+                    return x => _logger.LogCritical(x);
+
+                default:
+                    return x => _logger.LogDebug(x);
+            }
         }
     }
 }
