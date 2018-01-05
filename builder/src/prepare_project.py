@@ -49,6 +49,9 @@ NETCOREAPP_VERSION_PREFIX = 'netcoreapp'
 NETCORE_APP_PREFIX = 'microsoft.netcore.app/'
 
 
+DOTNET_BUILDER_IMAGE = 'gcr.io/cloud-builders/csharp/dotnet'
+
+
 def get_major_version(version):
     """Returns the major version of a parsed version.
 
@@ -397,7 +400,7 @@ class SingleProjectApp(object):
     # Dockerfile template to be used when packaging .csproj based apps.
     DOCKERFILE_CONTENTS = textwrap.dedent(
         """\
-        FROM gcr.io/cloud-builders/csharp/dotnet AS builder
+        FROM {dotnet_builder} AS builder
         COPY . /src
         WORKDIR /src
         RUN dotnet clean
@@ -410,13 +413,15 @@ class SingleProjectApp(object):
         ENTRYPOINT [ "dotnet", "{dll_name}.dll" ]
         """)
 
-    def __init__(self, project):
+    def __init__(self, project, dotnet_builder):
         """Initializes the instance of SingleProjectApp.
 
         Args:
             project: A string with the path to the project file.
+            dotnet_builder: A string with the dotnet builder image to use.
         """
         self.project = project
+        self.dotnet_builder = dotnet_builder
 
     def generate_dockerfile(self, version_map, output):
         """Generates the Dockerfile for the app.
@@ -445,7 +450,8 @@ class SingleProjectApp(object):
             sys.exit(1)
 
         project_name = self._get_project_assembly_name()
-        contents = SingleProjectApp.DOCKERFILE_CONTENTS.format(runtime_image=base_image.image,
+        contents = SingleProjectApp.DOCKERFILE_CONTENTS.format(dotnet_builder=self.dotnet_builder,
+                                                               runtime_image=base_image.image,
                                                                dll_name=project_name)
         with open(output, 'wt') as out:
             out.write(contents)
@@ -497,7 +503,7 @@ class SolutionApp(SingleProjectApp):
     # Dockerfile template to be used when packaging .sln based apps.
     DOCKERFILE_CONTENTS = textwrap.dedent(
         """\
-        FROM gcr.io/cloud-builders/csharp/dotnet AS builder
+        FROM {dotnet_builder} AS builder
         COPY . /src
         WORKDIR /src
         RUN dotnet clean
@@ -510,9 +516,9 @@ class SolutionApp(SingleProjectApp):
         ENTRYPOINT [ "dotnet", "{dll_name}.dll" ]
         """)
 
-    def __init__(self, app_yaml):
+    def __init__(self, app_yaml, dotnet_builder):
         main_project = get_startup_project(app_yaml)
-        super(SolutionApp, self).__init__(main_project)
+        super(SolutionApp, self).__init__(main_project, dotnet_builder)
         self.main_project = main_project
 
     def generate_dockerfile(self, version_map, output):
@@ -534,7 +540,8 @@ class SolutionApp(SingleProjectApp):
             sys.exit(1)
 
         project_name = self._get_project_assembly_name()
-        contents = SolutionApp.DOCKERFILE_CONTENTS.format(runtime_image=base_image.image,
+        contents = SolutionApp.DOCKERFILE_CONTENTS.format(dotnet_builder=self.dotnet_builder,
+                                                          runtime_image=base_image.image,
                                                           main_project=self.main_project,
                                                           dll_name=project_name)
         with open(output, 'wt') as out:
@@ -593,7 +600,7 @@ def get_base_image(version_map, version):
     return None
 
 
-def get_app(root, app_yaml, sdks):
+def get_app(root, app_yaml, sdks, dotnet_builder):
     """Detects the kind of app given the sources.
 
     This function will inspect the app and determine what kind of app
@@ -607,12 +614,12 @@ def get_app(root, app_yaml, sdks):
     solution_path = get_solution_path(root)
     if solution_path:
         validate_sdks(root, sdks)
-        return SolutionApp(app_yaml)
+        return SolutionApp(app_yaml, dotnet_builder)
 
     project_path = get_project_path(root)
     if project_path:
         validate_sdks(root, sdks)
-        return SingleProjectApp(project_path)
+        return SingleProjectApp(project_path, dotnet_builder)
 
     return None
 
@@ -637,7 +644,10 @@ def main(params):
         sys.exit(1)
 
     # Detect the type of app being deployed.
-    app = get_app(params.root, os.path.join(params.root, APP_YAML_NAME), params.sdks)
+    app = get_app(params.root,
+                  os.path.join(params.root, APP_YAML_NAME),
+                  params.sdks,
+                  params.dotnet_builder)
     if not app:
         print('The app is not supported for deployment.')
         sys.exit(1)
@@ -667,5 +677,9 @@ if __name__ == '__main__':
     PARSER.add_argument('-r', '--root',
                         help='The path to the root of the app.',
                         default='.',
+                        required=False)
+    PARSER.add_argument('-d', '--dotnet_builder_override',
+                        dest='dotnet_builder',
+                        default=DOTNET_BUILDER_IMAGE,
                         required=False)
     main(PARSER.parse_args())
